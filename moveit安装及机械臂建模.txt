@@ -1,0 +1,206 @@
+基于ubuntu22.04安装适合的ROS2 Humble
+
+1.首先检查当前区域设置，输入命令locale，若输出包含UTF-8字样则正确，否则依次输入以下命令后重启终端以生效：
+sudo apt update && sudo apt install locales
+sudo locale-gen en_US en_US.UTF-8
+sudo update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
+export LANG=en_US.UTF-8
+
+2.然后依次输入命令添加ROS2软件源：
+sudo apt install software-properties-common
+sudo add-apt-repository universe
+sudo apt update && sudo apt install curl -y
+sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
+
+3.安装ROS2软件包:
+sudo apt update
+sudo apt install ros-humble-desktop
+
+4.环境配置
+echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
+
+5.创建工作空间
+mkdir -p ~/ros2_ws/src       //源码置于src下
+echo "source ~/ros2_ws/install/setup.bash" >> ~/.bashrc
+
+6.安装colcon
+sudo apt install python3-colcon-common-extensions
+
+若src中存在需要构建的文件
+cd ~/ros2_ws
+colcon build --symlink-install
+
+
+
+
+apt方式安装moveit
+sudo apt update
+sudo apt upgrade
+sudo apt install ros-humble-moveit
+
+可选：下载moveit2完整源码
+cd ~/Desktop               //考虑到放在src文件夹下如果构建会生成新的moveit2文件可能产生版本混淆
+git clone https://github.com/moveit/moveit2.git
+
+
+
+源码包方式将moveit重新安装到工作空间
+sudo apt autoremove ros-humble-moveit*
+cd ~/ros2_ws/src
+git clone https://github.com/ros-planning/moveit2_tutorials -b humble
+sudo apt install python3-vcstool
+vcs import < moveit2_tutorials/moveit2_tutorials.repos
+sudo apt install python3-rosdep
+sudo rosdep init
+rosdep update
+sudo apt update
+sudo apt dist-upgrade
+cd ~/ros2_ws
+rosdep install --from-path src --ignore-src -r -y
+cd ~/ros2_ws/src/moveit_task_constructor
+git submodule update --init --recursive
+cd ~/ros2_ws
+colcon build --symlink-install
+
+
+
+
+安装体验moveit实例包
+sudo apt install ros-humble-moveit-resources-panda-moveit-config
+ros2 launch moveit_resources_panda_moveit_config demo.launch.py
+运行成功后弹出一个机械臂的rviz界面，左下角add一个MotionPlannig插件就可以通过手动拖拽机械臂设置目标点位后点击plan&execute来实现机械臂运动
+
+
+
+
+问题：这个动作是如何实现的？（规划-执行）
+1.规划层面（点击plan）
+输入数据： MoveIt 2 从 RViz 接收到 起始点 (Current State) 和 目标点 (Goal State)，以及选择的 Planning Group（例如 panda_arm）。
+
+碰撞检测： MoveIt 会使用机械臂的 URDF 模型和环境障碍物（虽然 demo 中环境为空）来生成一个 Planning Scene (规划场景)。
+
+算法工作：  Planner 列表中选择的算法（例如 RRTConnect）开始工作。它在机械臂的关节空间中随机采样点，并尝试将这些点连接起来，同时不断检查路径上的每一步是否会发生自碰撞或环境碰撞。
+
+输出轨迹： 如果算法成功找到一条从起始点到目标点的、无碰撞的路径，它将生成一个轨迹 (Trajectory)。这条轨迹就是一系列按时间顺序排列的关节角度序列。
+
+2.执行层面（点击execute)
+MoveIt 充当 Action Client (行为客户端)，它向一个名为 /joint_trajectory_controller/follow_joint_trajectory 的 Action Server (行为服务器) 发送一个请求（Goal）。这个请求包含了计算好的、完整的关节角度序列（即轨迹）。
+
+机器人的控制器（demo中是模拟控制器，通常由 ros2_control 框架实现）充当 Action Server。它接收到 MoveIt 发来的轨迹请求。
+
+控制器开始依次读取轨迹中的每一个关节角度点（Waypoint），它不断地向模拟环境（例如 Gazebo 或 RViz）发送指令，告诉每个关节应达到的目标角度。RViz 内部的模拟机制会根据这些指令，平滑地驱动模型运动。
+
+
+
+
+通过ros2 action list命令可以看到类似 /joint_trajectory_controller/follow_joint_trajectory 的服务名，这是 MoveIt 用来发送轨迹的核心 Action
+通过ros2 topic list查看相关topic，然后使用ros2 topic echo /topic_name查看实时数据
+
+
+
+
+demo具体代码是如何实现？
+通过apt安装的demo软件包路径/opt/ros/humble/share/moveit_resources_panda_moveit_config
+启动文件位于launch目录，其中demo.launch.py为入口文件，定义了demo运行所需的所有ros2节点。
+配置文件位于config目录，.yaml文件定义了很多参数，比如joint_limits.yaml定义了每个关节的速度、加速度等限制。
+
+
+
+
+对demo.launch.py文件作简要修改调试
+将98行的arguments=["0.0", "0.0", "0.0", "0.0", "0.0", "0.0",  "world", "panda_link0"]
+修改为arguments=["0.0", "0.0", "5.0", "0.0", "0.0", "0.0",  "world", "panda_link0"]机械臂的初始位置将基于父坐标系悬空5m
+
+
+
+
+
+创建我自己的机械臂模型
+cd ~/ros2_ws/src
+mkdir my_arm
+cd my_arm
+touch my_arm.urdf
+touch my_arm_with_gripper.urdf
+
+启动moveit配置助手
+ros2 run moveit_setup_assistant moveit_setup_assistant
+
+问题出现：我用配置助手加载自己的urdf文件一直卡死，而加载panda实例包的urdf没有问题，为什么？
+check_urdf my_arm.urdf命令输出正常说明我的urdf文件并不存在问题
+
+尝试别的模板：Universal Robots UR 系列（UR5 / UR10 真实工业臂）
+cd ~/ros2_ws/src
+git clone https://github.com/UniversalRobots/Universal_Robots_ROS2_Description.git
+这是一个模板包支持多种型号的机械臂需要手动生成一个具体的urdf文件
+cd ~/ros2_ws
+xacro src/Universal_Robots_ROS2_Description/urdf/ur.urdf.xacro name:=my_ur_robot ur_type:=ur5e > my_ur5e.urdf
+~/ros2_ws 目录下会有一个名为 my_ur5e.urdf 的文件
+colcon build --symlink-install           //构建
+启动配置助手要么卡死要么闪退
+
+
+查找可能解决方案
+方法一：强制使用 X11 后端（最推荐）
+ROS 的 GUI 工具（基于 Qt）在 Wayland 下的兼容性往往不好。我们可以通过环境变量强制它使用 X11 (xcb) 模式。
+export QT_QPA_PLATFORM=xcb
+ros2 run moveit_setup_assistant moveit_setup_assistant
+
+方法二：使用软件渲染（如果方法一无效）
+如果是显卡驱动导致的崩溃（OpenGL 错误），可以强制使用 CPU 进行软件渲染（会慢一点，但很稳）。
+
+export LIBGL_ALWAYS_SOFTWARE=1
+ros2 run moveit_setup_assistant moveit_setup_assistant
+
+
+
+最终解决方法（将urdf文件置于功能包中与moveit一起编译）
+cd ~/ros2_ws/src
+ros2 pkg create my_arm_description --build-type ament_cmake
+cd my_arm_description
+mkdir urdf
+将我的urdf文件置于urdf目录下
+cd ~/ros2_ws
+colcon build --symlink-install
+ros2 run moveit_setup_assistant moveit_setup_assistant
+
+
+
+生成配置包后运行demo.launch.py会遇到在rviz中没有加载到模型的问题，解决办法如下：
+首先进入my_arm_description目录，打开Cmakelists.txt将以下语句加入末尾
+install(
+  DIRECTORY urdf
+  DESTINATION share/${PROJECT_NAME}
+)
+然后进入配置包目录，找到config目录下的joint_limits.yaml将所有整型数改为浮点型
+
+这样虽然可以在rviz中加载出模型了，但是可能会遇到可以plan但是execute failed的问题
+解决：在moveit_controllers.yaml中给每个控制器添加接口action_ns: follow_joint_trajectory
+
+还存在plan较慢而且规划不停的问题
+解决：缺少 OMPL 规划器配置文件，使用默认规划器可能较慢，创建ompl_planning.yaml
+RViz 中 Loop Animation 开启，导致轨迹循环播放，在moveit.rviz中将 Loop Animation改为false
+
+至此可以通过命令ros2 launch my_arm_config demo.launch.py成功在rviz中显示机械臂模型并且通过motion planning插件对机械臂运动做plan & execute
+
+为了避免motion planning插件与joint_state_publisher_gui引起冲突新建一个display.launch.py文件来同时启动joint_state_publisher_gui节点和rviz节点实现通过滑动控件的方式控制关节的运动
+ros2 launch my_arm_config display.launch.py
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
